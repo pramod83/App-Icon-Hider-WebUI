@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>App Icon Hider - Pramod kumar</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: #121212;
+            color: #ffffff;
+            margin: 0;
+            padding: 16px;
+        }
+        .header { text-align: center; margin-bottom: 14px; }
+        h2 { color: #bb86fc; margin: 0 0 4px 0; font-size: 22px; }
+        .sub { font-size: 12px; color: #aaa; margin: 0; }
+        .controls { display: flex; gap: 8px; margin-bottom: 14px; }
+        #search {
+            flex: 1;
+            padding: 11px 14px;
+            border-radius: 10px;
+            border: 1px solid #333;
+            background: #1e1e1e;
+            color: white;
+            font-size: 15px;
+            outline: none;
+        }
+        #search:focus { border-color: #bb86fc; }
+        .btn-refresh {
+            background: #2c2c2c;
+            color: #bb86fc;
+            border: 1px solid #444;
+            border-radius: 10px;
+            padding: 0 14px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .app-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #1e1e1e;
+            padding: 12px 14px;
+            margin-bottom: 9px;
+            border-radius: 12px;
+            border: 1px solid #2a2a2a;
+        }
+        .app-info { max-width: 74%; overflow: hidden; }
+        .app-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: #fff;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .pkg-name {
+            font-size: 11px;
+            color: #888;
+            margin-top: 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .switch { position: relative; display: inline-block; width: 48px; height: 26px; flex-shrink: 0; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider {
+            position: absolute; cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #444; transition: .25s; border-radius: 26px;
+        }
+        .slider:before {
+            position: absolute; content: "";
+            height: 20px; width: 20px; left: 3px; bottom: 3px;
+            background-color: white; transition: .25s; border-radius: 50%;
+        }
+        input:checked + .slider { background-color: #bb86fc; }
+        input:checked + .slider:before { transform: translateX(22px); }
+        #status-box {
+            text-align: center;
+            padding: 20px;
+            color: #bbb;
+            font-size: 14px;
+            background: #1e1e1e;
+            border-radius: 12px;
+            border: 1px solid #333;
+        }
+        .error-text { color: #ff6b6b; font-weight: bold; }
+        #toast {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            background: #bb86fc; color: #000; padding: 10px 18px;
+            border-radius: 20px; font-size: 13px; font-weight: 600;
+            display: none; z-index: 999; box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h2>App Icon Hider</h2>
+        <p class="sub">By Pramod kumar &bull; Keeps background running</p>
+    </div>
+
+    <div class="controls">
+        <input type="text" id="search" placeholder="Search app (e.g. google, magisk)..." onkeyup="filterApps()">
+        <button class="btn-refresh" onclick="refreshLauncher()">Refresh</button>
+    </div>
+
+    <div id="status-box">Loading apps...</div>
+    <div id="app-list"></div>
+    <div id="toast"></div>
+
+    <script>
+        var cbCounter = 0;
+        var BLOCKED = [
+            "com.android.settings",
+            "com.android.systemui",
+            "com.android.launcher",
+            "com.android.launcher3",
+            "com.sec.android.app.launcher",
+            "com.miui.home",
+            "com.oppo.launcher",
+            "com.oneplus.launcher",
+            "io.github.a13e300.ksuwebui",
+            "me.weishu.kernelsu",
+            "me.bmax.apatch",
+            "com.termux"
+        ];
+
+        var FRIENDLY_NAMES = {
+            "com.google.android.googlequicksearchbox": "Google / Gemini",
+            "com.android.vending": "Google Play Store",
+            "com.google.android.youtube": "YouTube",
+            "com.android.chrome": "Google Chrome",
+            "com.google.android.gm": "Gmail",
+            "com.google.android.apps.maps": "Google Maps",
+            "com.google.android.apps.photos": "Google Photos",
+            "com.topjohnwu.magisk": "Magisk",
+            "com.whatsapp": "WhatsApp",
+            "com.instagram.android": "Instagram"
+        };
+
+        function showToast(msg) {
+            var t = document.getElementById("toast");
+            t.innerText = msg;
+            t.style.display = "block";
+            setTimeout(function() { t.style.display = "none"; }, 2500);
+        }
+
+        function execRoot(cmd) {
+            return new Promise(function(resolve) {
+                var done = false;
+                var timer = setTimeout(function() {
+                    if (!done) {
+                        done = true;
+                        resolve({ errno: 124, stdout: "", stderr: "Timeout: Root command took too long." });
+                    }
+                }, 8000);
+
+                try {
+                    if (typeof ksu !== "undefined" && typeof ksu.exec === "function") {
+                        var cbName = "ksu_cb_" + (++cbCounter);
+                        window[cbName] = function(errno, stdout, stderr) {
+                            if (!done) {
+                                done = true;
+                                clearTimeout(timer);
+                                delete window[cbName];
+                                resolve({ errno: errno, stdout: stdout || "", stderr: stderr || "" });
+                            }
+                        };
+                        ksu.exec(cmd, "{}", cbName);
+                    } else {
+                        done = true;
+                        clearTimeout(timer);
+                        resolve({ errno: 127, stdout: "", stderr: "WebUI API (ksu.exec) not detected. Open via KsuWebUI / KernelSU." });
+                    }
+                } catch (e) {
+                    if (!done) {
+                        done = true;
+                        clearTimeout(timer);
+                        resolve({ errno: 1, stdout: "", stderr: String(e) });
+                    }
+                }
+            });
+        }
+
+        function formatTitle(pkg) {
+            if (FRIENDLY_NAMES[pkg]) return FRIENDLY_NAMES[pkg];
+            var parts = pkg.split(".");
+            var last = parts[parts.length - 1] || pkg;
+            if (last === "android" || last === "app" || last === "apps") {
+                last = parts[parts.length - 2] || last;
+            }
+            return last.charAt(0).toUpperCase() + last.slice(1);
+        }
+
+        async function loadApps() {
+            var statusBox = document.getElementById("status-box");
+            var listDiv = document.getElementById("app-list");
+            statusBox.style.display = "block";
+            statusBox.innerHTML = "Loading apps...";
+            listDiv.innerHTML = "";
+
+            var pkgRes = await execRoot("pm list packages");
+            if (pkgRes.errno !== 0 || !pkgRes.stdout) {
+                statusBox.innerHTML = "<div class=\"error-text\">Error (" + pkgRes.errno + ")</div><p>" + (pkgRes.stderr || "Root permission denied. Check Magisk Superuser for KsuWebUI.") + "</p>";
+                return;
+            }
+
+            var savedRes = await execRoot("cat /data/adb/app_hider_list.txt 2>/dev/null");
+            var hiddenMap = {};
+            if (savedRes.stdout) {
+                var savedLines = savedRes.stdout.split("\n");
+                for (var i = 0; i < savedLines.length; i++) {
+                    var line = savedLines[i].trim();
+                    if (line.indexOf(":") > 0) {
+                        var p = line.split(":")[0];
+                        hiddenMap[p] = true;
+                    }
+                }
+            }
+
+            var rawLines = pkgRes.stdout.split("\n");
+            var apps = [];
+            for (var j = 0; j < rawLines.length; j++) {
+                var l = rawLines[j].trim();
+                if (l.indexOf("package:") === 0) {
+                    var pkgName = l.substring(8).trim();
+                    if (pkgName && BLOCKED.indexOf(pkgName) === -1) {
+                        apps.push({
+                            pkg: pkgName,
+                            title: formatTitle(pkgName),
+                            hidden: !!hiddenMap[pkgName]
+                        });
+                    }
+                }
+            }
+
+            apps.sort(function(a, b) {
+                if (a.hidden !== b.hidden) return a.hidden ? -1 : 1;
+                return a.title.localeCompare(b.title);
+            });
+
+            if (apps.length === 0) {
+                statusBox.innerHTML = "<div class=\"error-text\">No apps found</div>";
+                return;
+            }
+
+            statusBox.style.display = "none";
+            var htmlChunks = [];
+            for (var k = 0; k < apps.length; k++) {
+                var app = apps[k];
+                var checkedAttr = app.hidden ? "checked" : "";
+                htmlChunks.push(
+                    "<div class=\"app-item\" data-search=\"" + (app.title + " " + app.pkg).toLowerCase() + "\">" +
+                        "<div class=\"app-info\">" +
+                            "<div class=\"app-title\">" + app.title + "</div>" +
+                            "<div class=\"pkg-name\">" + app.pkg + "</div>" +
+                        "</div>" +
+                        "<label class=\"switch\">" +
+                            "<input type=\"checkbox\" " + checkedAttr + " onchange=\"toggleApp(this, '" + app.pkg + "')\">" +
+                            "<span class=\"slider\"></span>" +
+                        "</label>" +
+                    "</div>"
+                );
+            }
+            listDiv.innerHTML = htmlChunks.join("");
+        }
+
+        async function toggleApp(checkbox, pkg) {
+            checkbox.disabled = true;
+            var hide = checkbox.checked;
+
+            var actRes = await execRoot("cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER " + pkg);
+            var lines = (actRes.stdout || "").split("\n");
+            var targetAct = "";
+            for (var i = 0; i < lines.length; i++) {
+                var line = lines[i].trim();
+                if (line.indexOf(pkg + "/") === 0) {
+                    targetAct = line;
+                    break;
+                }
+            }
+
+            if (!targetAct) {
+                var savedRes = await execRoot("grep '^" + pkg + ":' /data/adb/app_hider_list.txt 2>/dev/null");
+                if (savedRes.stdout && savedRes.stdout.indexOf(":") > 0) {
+                    targetAct = savedRes.stdout.trim().split(":")[1];
+                }
+            }
+
+            if (!targetAct) {
+                checkbox.checked = !hide;
+                checkbox.disabled = false;
+                showToast("This app has no launcher icon");
+                return;
+            }
+
+            if (hide) {
+                var disRes = await execRoot("pm disable --user 0 " + targetAct);
+                if (disRes.errno === 0) {
+                    await execRoot("grep -v '^" + pkg + ":' /data/adb/app_hider_list.txt 2>/dev/null > /data/adb/app_hider_list.tmp; echo '" + pkg + ":" + targetAct + "' >> /data/adb/app_hider_list.tmp; mv /data/adb/app_hider_list.tmp /data/adb/app_hider_list.txt");
+                    showToast("Hidden: " + formatTitle(pkg));
+                } else {
+                    checkbox.checked = false;
+                    showToast("Failed to hide app");
+                }
+            } else {
+                var enRes = await execRoot("pm enable --user 0 " + targetAct);
+                if (enRes.errno === 0) {
+                    await execRoot("grep -v '^" + pkg + ":' /data/adb/app_hider_list.txt 2>/dev/null > /data/adb/app_hider_list.tmp; mv /data/adb/app_hider_list.tmp /data/adb/app_hider_list.txt");
+                    showToast("Unhidden: " + formatTitle(pkg));
+                } else {
+                    checkbox.checked = true;
+                    showToast("Failed to unhide app");
+                }
+            }
+            checkbox.disabled = false;
+        }
+
+        async function refreshLauncher() {
+            showToast("Refreshing launcher...");
+            await execRoot("am force-stop com.android.launcher com.oneplus.launcher com.oppo.launcher com.android.launcher3 com.sec.android.app.launcher com.miui.home 2>/dev/null");
+        }
+
+        function filterApps() {
+            var q = document.getElementById("search").value.toLowerCase();
+            var items = document.getElementsByClassName("app-item");
+            for (var i = 0; i < items.length; i++) {
+                var txt = items[i].getAttribute("data-search") || "";
+                items[i].style.display = txt.indexOf(q) !== -1 ? "flex" : "none";
+            }
+        }
+
+        window.addEventListener("load", loadApps);
+    </script>
+</body>
+</html>
