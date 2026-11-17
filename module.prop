@@ -1,0 +1,6 @@
+id=app_icon_hider_webui
+name=App Icon Hider (WebUI)
+version=v2.2-Final
+versionCode=22
+author=Pramod kumar
+description=Hide and Unhide any app icon (keeps background services running) directly from WebUI.
